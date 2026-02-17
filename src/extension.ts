@@ -21,25 +21,39 @@ let DEFAULT_API_VERSION = "";
  * from Dock/Finder, so we check common install locations.
  */
 function getSfCommand(): string {
-  const candidates = [
-    "sf", // default PATH
-    "/usr/local/bin/sf",
-    "/opt/homebrew/bin/sf",
-    path.join(
-      process.env.HOME || "~",
-      ".nvm/versions/node",
-      process.version,
-      "bin/sf",
-    ),
-    path.join(process.env.HOME || "~", ".local/bin/sf"),
-  ];
+  const isWindows = process.platform === "win32";
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+
+  // Try "sf" on PATH first using the platform-appropriate lookup command
+  try {
+    const whichCmd = isWindows ? "where sf" : "which sf";
+    child.execSync(whichCmd, { stdio: "ignore" });
+    return "sf";
+  } catch {
+    // not on PATH — check common install locations
+  }
+
+  const candidates: string[] = isWindows
+    ? [
+        path.join(process.env.APPDATA || "", "npm", "sf.cmd"),
+        path.join(
+          process.env.ProgramFiles || "C:\\Program Files",
+          "sf",
+          "bin",
+          "sf.cmd",
+        ),
+        path.join(home, "AppData", "Local", "sf", "bin", "sf.cmd"),
+      ]
+    : [
+        "/usr/local/bin/sf",
+        "/opt/homebrew/bin/sf",
+        path.join(home, ".nvm/versions/node", process.version, "bin/sf"),
+        path.join(home, ".local/bin/sf"),
+      ];
+
   for (const candidate of candidates) {
     try {
-      if (candidate === "sf") {
-        child.execSync("which sf", { stdio: "ignore" });
-        return "sf";
-      }
-      if (fs.existsSync(candidate)) {
+      if (candidate && fs.existsSync(candidate)) {
         return candidate;
       }
     } catch {
