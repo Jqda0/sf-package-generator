@@ -42,8 +42,9 @@ jobs:
 
       - name: Push version bump commit and tag
         run: |
+          VERSION=$(node -p "require('./package.json').version")
           git add package.json package-lock.json
-          git commit -m "chore: bump version to $(node -p \"require('./package.json').version\")"
-          git tag "v$(node -p \"require('./package.json').version\")"
+          git commit -m "chore: bump version to $VERSION"
+          git tag "v$VERSION"
           git push
           git push --tags
