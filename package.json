@@ -32,11 +32,12 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run package",
     "compile": "tsc -p ./",
+    "package": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
     "lint": "eslint",
     "watch": "tsc -w -p ./",
-    "test": "mocha",
+    "test": "npm run compile && mocha",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "husky"
@@ -56,6 +57,7 @@
     "@types/node": "^20",
     "@types/vscode": "^1.73.0",
     "@types/vscode-webview": "^1.57.0",
+    "esbuild": "^0.27.3",
     "eslint": "^9.17.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
