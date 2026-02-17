@@ -13,6 +13,11 @@ import {
 
 const fs = require("fs");
 const xml2js = require("xml2js");
+
+// Extension version — used to invalidate cache on update
+const EXTENSION_VERSION: string =
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require("../package.json").version ?? "0.0.0";
 let DEFAULT_API_VERSION = "";
 
 /**
@@ -159,6 +164,16 @@ class CodingPanel {
       }
       const raw = fs.readFileSync(cachePath, "utf-8");
       const cache = JSON.parse(raw);
+      if (cache.extensionVersion !== EXTENSION_VERSION) {
+        console.log(
+          "Cache invalidated (extension updated from " +
+            (cache.extensionVersion || "unknown") +
+            " to " +
+            EXTENSION_VERSION +
+            ")",
+        );
+        return null;
+      }
       const age = Date.now() - (cache.timestamp || 0);
       if (age > CACHE_TTL_MS) {
         console.log(
@@ -182,6 +197,7 @@ class CodingPanel {
         fs.mkdirSync(cacheDir, { recursive: true });
       }
       cache.timestamp = Date.now();
+      cache.extensionVersion = EXTENSION_VERSION;
       fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), "utf-8");
       console.log("Cache written to " + cachePath);
     } catch (e) {
