@@ -162,23 +162,7 @@ export const WILDCARD_TYPES = new Set([
 export const NON_RETRIEVABLE_TYPES = new Set([
   "EventDelivery",
   "EventSubscription",
-  "Scontrol",
   "ArticleType",
-  "CustomObject",
-  "CustomField",
-  "StandardValueSet",
-  "FieldSet",
-  "CompactLayout",
-  "WebLink",
-  "RecordType",
-  "ValidationRule",
-  "BusinessProcess",
-  "ListView",
-  "SharingReason",
-  "InstalledPackage",
-  "Portal",
-  "Territory",
-  "ChannelLayout",
 ]);
 
 /** Map of folder-based metadata types to their folder type names. */

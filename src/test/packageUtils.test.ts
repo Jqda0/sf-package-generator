@@ -285,7 +285,12 @@ describe("filterRetrievableTypes", () => {
       "Layout",
     ];
     const result = filterRetrievableTypes(input);
-    assert.deepStrictEqual(result, ["ApexClass", "Flow", "Layout"]);
+    assert.deepStrictEqual(result, [
+      "ApexClass",
+      "Flow",
+      "CustomObject",
+      "Layout",
+    ]);
   });
 
   it("returns empty array for empty input", () => {
@@ -338,19 +343,16 @@ describe("constants", () => {
   it("NON_RETRIEVABLE_TYPES contains expected deprecated types", () => {
     assert.ok(NON_RETRIEVABLE_TYPES.has("EventDelivery"));
     assert.ok(NON_RETRIEVABLE_TYPES.has("EventSubscription"));
-    assert.ok(NON_RETRIEVABLE_TYPES.has("Scontrol"));
     assert.ok(NON_RETRIEVABLE_TYPES.has("ArticleType"));
   });
 
-  it("NON_RETRIEVABLE_TYPES contains expected child types", () => {
-    assert.ok(NON_RETRIEVABLE_TYPES.has("CustomField"));
-    assert.ok(NON_RETRIEVABLE_TYPES.has("ValidationRule"));
-    assert.ok(NON_RETRIEVABLE_TYPES.has("RecordType"));
-    assert.ok(NON_RETRIEVABLE_TYPES.has("ListView"));
-  });
-
-  it("NON_RETRIEVABLE_TYPES does not include valid types", () => {
+  it("NON_RETRIEVABLE_TYPES does not include retrievable types", () => {
     assert.ok(!NON_RETRIEVABLE_TYPES.has("ApexClass"));
+    assert.ok(!NON_RETRIEVABLE_TYPES.has("CustomObject"));
+    assert.ok(!NON_RETRIEVABLE_TYPES.has("CustomField"));
+    assert.ok(!NON_RETRIEVABLE_TYPES.has("ValidationRule"));
+    assert.ok(!NON_RETRIEVABLE_TYPES.has("RecordType"));
+    assert.ok(!NON_RETRIEVABLE_TYPES.has("ListView"));
     assert.ok(!NON_RETRIEVABLE_TYPES.has("Flow"));
     assert.ok(!NON_RETRIEVABLE_TYPES.has("Layout"));
   });
