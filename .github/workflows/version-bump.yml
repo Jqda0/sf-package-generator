@@ -11,7 +11,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     # Skip if the last commit was a version bump to avoid infinite loops
-    if: "!contains(github.event.head_commit.message, 'chore: bump version') && !startsWith(github.event.head_commit.message, 'v')"
+    if: "!contains(github.event.head_commit.message, 'chore: bump version')"
 
     steps:
       - uses: actions/checkout@v4
@@ -35,14 +35,19 @@ jobs:
       - name: Install vsce
         run: npm install -g @vscode/vsce
 
-      - name: Publish with minor version bump
-        run: vsce publish minor
+      - name: Bump version
+        run: npm version minor --no-git-tag-version
+
+      - name: Publish current version
+        run: vsce publish
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
-      - name: Push version bump and tag
+      - name: Commit and push version bump
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          git tag "v$VERSION" || true
+          git add package.json package-lock.json
+          git commit -m "chore: bump version to $VERSION"
+          git tag "v$VERSION"
           git push
           git push --tags
