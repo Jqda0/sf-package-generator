@@ -2,14 +2,14 @@ import * as path from "path";
 import * as vscode from "vscode";
 import * as child from "child_process";
 import {
-	FALLBACK_API_VERSION,
-	CACHE_TTL_MS,
-	WILDCARD_TYPES,
-	NON_RETRIEVABLE_TYPES,
-	REPORT_FOLDER_MAP,
-	buildPackageMap,
-	buildSelectedMetadataMap,
-	generatePackageXmlString,
+  FALLBACK_API_VERSION,
+  CACHE_TTL_MS,
+  WILDCARD_TYPES,
+  NON_RETRIEVABLE_TYPES,
+  REPORT_FOLDER_MAP,
+  buildPackageMap,
+  buildSelectedMetadataMap,
+  generatePackageXmlString,
 } from "./packageUtils.js";
 
 let clipboardy: any;
@@ -18,893 +18,944 @@ var xml2js = require("xml2js");
 let DEFAULT_API_VERSION = "";
 
 export function activate(context: vscode.ExtensionContext) {
-	context.subscriptions.push(
-		vscode.commands.registerCommand("sfPackageGen.chooseMetadata", async () => {
-			// Dynamically import clipboardy
-			const module = await import("clipboardy");
-			clipboardy = module.default || module; // Handle both default and named exports
-			console.log(clipboardy);
-			DEFAULT_API_VERSION = await getAPIVersion();
-			console.log("DEFAULT_API_VERSION " + DEFAULT_API_VERSION);
-			CodingPanel.createOrShow(context.extensionPath);
-		}),
-	);
+  context.subscriptions.push(
+    vscode.commands.registerCommand("sfPackageGen.chooseMetadata", async () => {
+      // Dynamically import clipboardy
+      const module = await import("clipboardy");
+      clipboardy = module.default || module; // Handle both default and named exports
+      console.log(clipboardy);
+      DEFAULT_API_VERSION = await getAPIVersion();
+      console.log("DEFAULT_API_VERSION " + DEFAULT_API_VERSION);
+      CodingPanel.createOrShow(context.extensionPath);
+    }),
+  );
 }
 
 function getAPIVersion(): Promise<string> {
-	console.log("getAPIVersion invoked");
-	return new Promise((resolve, reject) => {
-		let sfCmd = "sf org display --json";
-		let foo: child.ChildProcess = child.exec(sfCmd, {
-			maxBuffer: 1024 * 1024 * 6,
-			cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
-		});
-		let bufferOutData = "";
-		let stderrData = "";
-		foo.stdout.on("data", (dataArg: any) => {
-			console.log("stdout: " + dataArg);
-			bufferOutData += dataArg;
-		});
+  console.log("getAPIVersion invoked");
+  return new Promise((resolve, reject) => {
+    let sfCmd = "sf org display --json";
+    let foo: child.ChildProcess = child.exec(sfCmd, {
+      maxBuffer: 1024 * 1024 * 6,
+      cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
+    });
+    let bufferOutData = "";
+    let stderrData = "";
+    foo.stdout.on("data", (dataArg: any) => {
+      console.log("stdout: " + dataArg);
+      bufferOutData += dataArg;
+    });
 
-		foo.stderr.on("data", (data: any) => {
-			console.log("stderr: " + data);
-			stderrData += data;
-		});
+    foo.stderr.on("data", (data: any) => {
+      console.log("stderr: " + data);
+      stderrData += data;
+    });
 
-		foo.on("exit", (code: number, signal: string) => {
-			console.log("exited with code " + code);
-			console.log("bufferOutData " + bufferOutData);
-			try {
-				let data = JSON.parse(bufferOutData);
-				// SF CLI v2 may nest result differently
-				let apiVersion = data?.result?.apiVersion;
-				if (!apiVersion) {
-					console.log("apiVersion not found in result, using fallback");
-					apiVersion = FALLBACK_API_VERSION;
-				}
-				console.log("apiVersion " + apiVersion);
-				resolve(apiVersion);
-			} catch (e) {
-				console.error("Error parsing sf org display output: " + e);
-				console.error("stderr: " + stderrData);
-				vscode.window.showWarningMessage(
-					"Could not determine API version from org. Using default version " + FALLBACK_API_VERSION,
-				);
-				resolve(FALLBACK_API_VERSION);
-			}
-		});
-	});
+    foo.on("exit", (code: number, signal: string) => {
+      console.log("exited with code " + code);
+      console.log("bufferOutData " + bufferOutData);
+      try {
+        let data = JSON.parse(bufferOutData);
+        // SF CLI v2 may nest result differently
+        let apiVersion = data?.result?.apiVersion;
+        if (!apiVersion) {
+          console.log("apiVersion not found in result, using fallback");
+          apiVersion = FALLBACK_API_VERSION;
+        }
+        console.log("apiVersion " + apiVersion);
+        resolve(apiVersion);
+      } catch (e) {
+        console.error("Error parsing sf org display output: " + e);
+        console.error("stderr: " + stderrData);
+        vscode.window.showWarningMessage(
+          "Could not determine API version from org. Using default version " +
+            FALLBACK_API_VERSION,
+        );
+        resolve(FALLBACK_API_VERSION);
+      }
+    });
+  });
 }
 /**
  * Manages cat coding webview panels
  */
 class CodingPanel {
-	/**
-	 * Track the currently panel. Only allow a single panel to exist at a time.
-	 */
-	public static currentPanel: CodingPanel | undefined;
-
-	public static readonly viewType = "Coding";
-
-	private readonly _panel: vscode.WebviewPanel;
-	private readonly _extensionPath: string;
-	private _disposables: vscode.Disposable[] = [];
-	private reportFolderMap = REPORT_FOLDER_MAP;
-	// WILDCARD_TYPES imported from packageUtils.ts
-
-	// NON_RETRIEVABLE_TYPES imported from packageUtils.ts
-
-	private VERSION_NUM = DEFAULT_API_VERSION;
-	private static CACHE_FILE_NAME = ".sf-package-generator-cache.json";
-	private infoMsg = "All metadata selected except ";
-
-	private static getCachePath(): string {
-		return path.join(
-			vscode.workspace.workspaceFolders[0].uri.fsPath,
-			".sf",
-			CodingPanel.CACHE_FILE_NAME,
-		);
-	}
-
-	private static readCache(): any | null {
-		try {
-			const cachePath = CodingPanel.getCachePath();
-			if (!fs.existsSync(cachePath)) {
-				return null;
-			}
-			const raw = fs.readFileSync(cachePath, "utf-8");
-			const cache = JSON.parse(raw);
-			const age = Date.now() - (cache.timestamp || 0);
-			if (age > CACHE_TTL_MS) {
-				console.log("Cache expired (age: " + Math.round(age / 1000 / 60) + " min)");
-				return null;
-			}
-			console.log("Cache hit (age: " + Math.round(age / 1000 / 60) + " min)");
-			return cache;
-		} catch (e) {
-			console.error("Error reading cache: " + e);
-			return null;
-		}
-	}
-
-	private static writeCache(cache: any): void {
-		try {
-			const cachePath = CodingPanel.getCachePath();
-			const cacheDir = path.dirname(cachePath);
-			if (!fs.existsSync(cacheDir)) {
-				fs.mkdirSync(cacheDir, { recursive: true });
-			}
-			cache.timestamp = Date.now();
-			fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), "utf-8");
-			console.log("Cache written to " + cachePath);
-		} catch (e) {
-			console.error("Error writing cache: " + e);
-		}
-	}
-
-	private static clearCache(): void {
-		try {
-			const cachePath = CodingPanel.getCachePath();
-			if (fs.existsSync(cachePath)) {
-				fs.unlinkSync(cachePath);
-				console.log("Cache cleared");
-			}
-		} catch (e) {
-			console.error("Error clearing cache: " + e);
-		}
-	}
-
-	public static createOrShow(extensionPath: string) {
-		const column = vscode.window.activeTextEditor
-			? vscode.window.activeTextEditor.viewColumn
-			: undefined;
-
-		// If we already have a panel, show it.
-		if (CodingPanel.currentPanel) {
-			CodingPanel.currentPanel._panel.reveal(column);
-			return;
-		}
-
-		// Otherwise, create a new panel.
-		const panel = vscode.window.createWebviewPanel(
-			CodingPanel.viewType,
-			"Choose Metadata Components",
-			column || vscode.ViewColumn.One,
-			{
-				// Enable javascript in the webview
-				enableScripts: true,
-				retainContextWhenHidden: true,
-			},
-		);
-		CodingPanel.currentPanel = new CodingPanel(panel, extensionPath);
-	}
-
-	public static revive(panel: vscode.WebviewPanel, extensionPath: string) {
-		CodingPanel.currentPanel = new CodingPanel(panel, extensionPath);
-	}
-
-	private constructor(panel: vscode.WebviewPanel, extensionPath: string) {
-		this._panel = panel;
-		this._extensionPath = extensionPath;
-
-		// Set the webview's initial html content
-		this._update();
-
-		// Listen for when the panel is disposed
-		// This happens when the user closes the panel or when the panel is closed programatically
-		this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
-
-		// Handle messages from the webview
-		this._panel.webview.onDidReceiveMessage(
-			async (message) => {
-				switch (message.command) {
-					case "fetchChildren":
-						console.log("onDidReceiveMessage fetchChildren");
-						let metadataType = message.metadataType;
-						this.fetchChildren(metadataType);
-						return;
-
-					case "buildPackageXML":
-						console.log("onDidReceiveMessage buildPackageXML");
-						this.buildPackageXML(message.selectedNodes, false);
-						return;
-
-					case "getMetadataTypes":
-						console.log("onDidReceiveMessage getMetadataTypes");
-						this.getMetadataTypes({});
-						return;
-
-					case "copyToClipboard":
-						console.log("onDidReceiveMessage copyToClipboard");
-						this.buildPackageXML(message.selectedNodes, true);
-						return;
-
-					case "selectAll":
-						console.log("onDidReceiveMessage selectAll");
-						let selectedMetadata = message.selectedMetadata;
-						let skippedMetadataTypes = message.skippedMetadataTypes;
-						this.fetchAllChildren(selectedMetadata, skippedMetadataTypes, 0);
-						return;
-					case "INIT_LOAD_REQUEST":
-						console.log("onDidReceiveMessage INIT_LOAD_REQUEST");
-						this.handleInitLoadRequest();
-						return;
-
-					case "FETCH_CHILDREN_REQUEST":
-						console.log("onDidReceiveMessage FETCH_CHILDREN");
-						this.fetchChildren(message.metadataType);
-						return;
-
-					case "UPDATE_PACKAGE_XML":
-						console.log("onDidReceiveMessage UPDATE_PACKAGE_XML");
-						this.handleUpdatePackageXml(message.metadataTypes);
-						return;
-
-					case "COPY_TO_CLIPBOARD":
-						console.log("onDidReceiveMessage COPY_TO_CLIPBOARD");
-						this.handleCopyToClipboard(message.metadataTypes);
-						return;
-
-					case "REFRESH_CACHE":
-						console.log("onDidReceiveMessage REFRESH_CACHE");
-						CodingPanel.clearCache();
-						this.handleInitLoadRequest();
-						return;
-
-					case "OPEN_URL":
-						console.log("onDidReceiveMessage OPEN_URL");
-						this.openUrl(message.url);
-						return;
-				}
-			},
-			null,
-			this._disposables,
-		);
-	}
-
-	private buildPackageXML(selectedNodes, isCopyToClipboard) {
-		console.log("Invoked buildPackageXML");
-		if (!selectedNodes || selectedNodes.length == 0) {
-			vscode.window.showErrorMessage("Please select components for package.xml");
-			return;
-		}
-
-		let mpPackage = this.buildPackageMap(selectedNodes);
-		this.generatePackageXML(mpPackage, isCopyToClipboard);
-	}
-
-	private buildPackageMap(selectedNodes) {
-		console.log("Invoked buildPackageMap");
-		const mpPackage = buildPackageMap(selectedNodes);
-		for (const [k, v] of mpPackage) {
-			console.log(k, v);
-		}
-		return mpPackage;
-	}
-
-	private generatePackageXML(mpPackage, isCopyToClipboard) {
-		console.log("Invoked generatePackageXML");
-		const xmlString = generatePackageXmlString(mpPackage, this.VERSION_NUM);
-		if (!xmlString) {
-			console.log("generatePackageXML: empty map, nothing to generate");
-			return;
-		}
-		console.log(xmlString);
-
-		if (isCopyToClipboard) {
-			console.log("Copy to Clipboard - Initiated");
-			console.log(clipboardy);
-			clipboardy.write(xmlString).then((result) => {
-				console.log(result);
-				vscode.window.showInformationMessage("Contents Copied to Clipboard successfully!!");
-			});
-		} else {
-			fs.writeFile(
-				vscode.workspace.workspaceFolders[0].uri.fsPath + "/manifest/package.xml",
-				xmlString,
-				(err) => {
-					if (err) {
-						console.log(err);
-						vscode.window.showErrorMessage(err);
-					}
-					console.log("Successfully Written to File.");
-					vscode.workspace
-						.openTextDocument(
-							vscode.workspace.workspaceFolders[0].uri.fsPath + "/manifest/package.xml",
-						)
-						.then((data) => {
-							console.log("Opened " + data.fileName);
-							vscode.window.showTextDocument(data);
-						});
-				},
-			);
-		}
-	}
-
-	private fetchChildren(metadataType) {
-		console.log("Invoked fetchChildren");
-		let mType = metadataType.id;
-		let node = metadataType;
-		console.log("Invoked fetchChildren " + JSON.stringify(node));
-
-		// Check cache for this metadata type's children
-		const cache = CodingPanel.readCache();
-		if (cache && cache.children && cache.children[mType] && cache.apiVersion === this.VERSION_NUM) {
-			console.log("Loading children for " + mType + " from cache");
-			this._panel.webview.postMessage({
-				command: "listmetadata",
-				results: cache.children[mType],
-				metadataType: mType,
-			});
-			return;
-		}
-
-		if (!node.inFolder) {
-			vscode.window.withProgress(
-				{
-					location: vscode.ProgressLocation.Notification,
-					title: "Processing Metadata : " + mType,
-					cancellable: true,
-				},
-				(progress, token) => {
-					token.onCancellationRequested(() => {
-						console.log("User canceled the long running operation");
-					});
-
-					var p = new Promise<void>((resolve) => {
-						let sfCmd =
-							"sf org list metadata --metadata-type " +
-							mType +
-							" --api-version " +
-							this.VERSION_NUM +
-							" --json";
-						let foo: child.ChildProcess = child.exec(sfCmd, {
-							cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
-						});
-
-						let bufferOutData = "";
-
-						foo.stdout.on("data", (dataArg: any) => {
-							console.log("stdout: " + dataArg);
-							bufferOutData += dataArg;
-						});
-
-						foo.stderr.on("data", (data: any) => {
-							console.log("stderr: " + data);
-						});
-
-						foo.stdin.on("data", (data: any) => {
-							console.log("stdin: " + data);
-						});
-
-						foo.on("exit", (code, signal) => {
-							console.log("exit code " + code);
-							console.log("bufferOutData " + bufferOutData);
-							try {
-								let data = JSON.parse(bufferOutData);
-								let results = data.result;
-								// Cache the children results
-								this.cacheChildrenResults(mType, results);
-								this._panel.webview.postMessage({
-									command: "listmetadata",
-									results: results,
-									metadataType: mType,
-								});
-							} catch (e) {
-								console.error("Error parsing list metadata output for " + mType + ": " + e);
-								vscode.window.showErrorMessage(
-									"Error fetching metadata for " +
-										mType +
-										". Make sure your SF CLI is authenticated and up to date.",
-								);
-								this._panel.webview.postMessage({
-									command: "listmetadata",
-									results: [],
-									metadataType: mType,
-								});
-							}
-							resolve();
-						});
-					});
-
-					return p;
-				},
-			);
-		} else {
-			//get the folder
-
-			let folderType = this.reportFolderMap[mType];
-			let sfCmd =
-				"sf org list metadata --metadata-type " +
-				folderType +
-				" --api-version " +
-				this.VERSION_NUM +
-				" --json";
-
-			vscode.window.withProgress(
-				{
-					location: vscode.ProgressLocation.Notification,
-					title: "Processing Metadata : " + folderType,
-					cancellable: true,
-				},
-				(progress, token) => {
-					token.onCancellationRequested(() => {
-						console.log("User canceled the long running operation");
-					});
-
-					var p = new Promise((resolve) => {
-						let foo: child.ChildProcess = child.exec(sfCmd, {
-							maxBuffer: 1024 * 1024 * 6,
-							cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
-						});
-
-						let bufferOutData = "";
-
-						foo.stdout.on("data", (dataArg: any) => {
-							console.log("stdout: " + dataArg);
-							bufferOutData += dataArg;
-						});
-
-						foo.stderr.on("data", (data: any) => {
-							console.log("stderr: " + data);
-						});
-
-						foo.stdin.on("data", (data: any) => {
-							console.log("stdin: " + data);
-						});
-
-						foo.on("exit", (code, signal) => {
-							console.log("exit code " + code);
-							console.log("bufferOutData " + bufferOutData);
-							try {
-								let data = JSON.parse(bufferOutData);
-								let folderNames = [];
-								let results = data.result;
-
-								if (!results || results.length == 0) {
-									//no folders
-									this._panel.webview.postMessage({
-										command: "listmetadata",
-										results: results,
-										metadataType: mType,
-									});
-									resolve(undefined);
-									return;
-								} else if (!Array.isArray(results)) {
-									//1 folder
-									folderNames.push(results.fullName);
-								} else {
-									//many folders
-									for (let i = 0; i < results.length; i++) {
-										folderNames.push(results[i].fullName);
-									}
-								}
-
-								//get the components inside each folder
-								this.getComponentsInsideFolders(folderNames, mType, 0, []);
-							} catch (e) {
-								console.error(
-									"Error parsing list metadata output for folder type " + folderType + ": " + e,
-								);
-								vscode.window.showErrorMessage(
-									"Error fetching folder metadata. Make sure your SF CLI is authenticated and up to date.",
-								);
-								this._panel.webview.postMessage({
-									command: "listmetadata",
-									results: [],
-									metadataType: mType,
-								});
-							}
-							resolve(undefined);
-						});
-					});
-
-					return p;
-				},
-			);
-		}
-	}
-
-	public fetchAllChildren(selectedMetadata, skippedMetadataTypes, index) {
-		console.log("Invoked fetchAllChildren");
-		if (!selectedMetadata || selectedMetadata.length == 0) {
-			return;
-		}
-
-		if (index == selectedMetadata.length) {
-			//end condition
-			let mpKeys = [];
-			for (let key in this.reportFolderMap) {
-				mpKeys.push(key);
-			}
-			vscode.window.showInformationMessage(this.infoMsg + skippedMetadataTypes.join()); //Modified for #18
-			return;
-		}
-
-		let mType = selectedMetadata[index];
-
-		vscode.window.withProgress(
-			{
-				location: vscode.ProgressLocation.Notification,
-				title: "Processing Metadata : " + mType,
-				cancellable: true,
-			},
-			(progress, token) => {
-				token.onCancellationRequested(() => {
-					console.log("User canceled the long running operation");
-				});
-
-				var p = new Promise((resolve) => {
-					let sfCmd =
-						"sf org list metadata --metadata-type " +
-						mType +
-						" --api-version " +
-						this.VERSION_NUM +
-						" --json";
-					let foo: child.ChildProcess = child.exec(sfCmd, {
-						cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
-					});
-
-					let bufferOutData = "";
-
-					foo.stdout.on("data", (dataArg: any) => {
-						console.log("stdout: " + dataArg);
-						bufferOutData += dataArg;
-					});
-
-					foo.stderr.on("data", (data: any) => {
-						console.log("stderr: " + data);
-					});
-
-					foo.stdin.on("data", (data: any) => {
-						console.log("stdin: " + data);
-					});
-
-					foo.on("exit", (code, signal) => {
-						console.log("exit code " + code);
-						console.log("bufferOutData " + bufferOutData);
-						try {
-							let data = JSON.parse(bufferOutData);
-							let results = data.result;
-							this._panel.webview.postMessage({
-								command: "listmetadata",
-								results: results,
-								metadataType: mType,
-							});
-						} catch (e) {
-							console.error("Error parsing list metadata output for " + mType + ": " + e);
-							this._panel.webview.postMessage({
-								command: "listmetadata",
-								results: [],
-								metadataType: mType,
-							});
-						}
-						resolve(undefined);
-						this.fetchAllChildren(selectedMetadata, skippedMetadataTypes, ++index); //recurse through other metadata
-					});
-				});
-
-				return p;
-			},
-		);
-	}
-	public getComponentsInsideFolders(folderNames, mType, index, resultsArr) {
-		if (index == folderNames.length) {
-			// Cache the combined folder results
-			this.cacheChildrenResults(mType, resultsArr);
-			this._panel.webview.postMessage({
-				command: "listmetadata",
-				results: resultsArr,
-				metadataType: mType,
-			});
-			return;
-		}
-
-		vscode.window.withProgress(
-			{
-				location: vscode.ProgressLocation.Notification,
-				title: "Processing Metadata : " + mType + ":" + folderNames[index],
-				cancellable: true,
-			},
-			(progress, token) => {
-				token.onCancellationRequested(() => {
-					console.log("User canceled the long running operation");
-				});
-
-				var p = new Promise((resolve) => {
-					let sfCmd =
-						"sf org list metadata --metadata-type " +
-						mType +
-						" --folder " +
-						folderNames[index] +
-						" --api-version " +
-						this.VERSION_NUM +
-						" --json";
-					let foo: child.ChildProcess = child.exec(sfCmd, {
-						maxBuffer: 1024 * 1024 * 6,
-						cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
-					});
-
-					let bufferOutData = "";
-
-					foo.stdout.on("data", (dataArg: any) => {
-						console.log("stdout: " + dataArg);
-						bufferOutData += dataArg;
-					});
-
-					foo.stderr.on("data", (data: any) => {
-						console.log("stderr: " + data);
-					});
-
-					foo.stdin.on("data", (data: any) => {
-						console.log("stdin: " + data);
-					});
-
-					foo.on("exit", (code, signal) => {
-						console.log("exit code " + code);
-						console.log("bufferOutData " + bufferOutData);
-						try {
-							let data = JSON.parse(bufferOutData);
-							let results = data.result;
-
-							if (results) {
-								if (!Array.isArray(results)) {
-									//1 folder
-									resultsArr.push(results);
-								} else {
-									//many folders
-									for (let i = 0; i < results.length; i++) {
-										resultsArr.push(results[i]);
-									}
-								}
-							}
-						} catch (e) {
-							console.error(
-								"Error parsing list metadata output for folder " + folderNames[index] + ": " + e,
-							);
-						}
-
-						resolve(undefined);
-						console.log("After resolve getComponentsInsideFolders");
-						this.getComponentsInsideFolders(folderNames, mType, ++index, resultsArr);
-					});
-				});
-
-				return p;
-			},
-		);
-	}
-
-	private cacheChildrenResults(mType: string, results: any): void {
-		try {
-			const cache = CodingPanel.readCache() || { apiVersion: this.VERSION_NUM, children: {} };
-			if (!cache.children) {
-				cache.children = {};
-			}
-			cache.children[mType] = results;
-			CodingPanel.writeCache(cache);
-		} catch (e) {
-			console.error("Error caching children for " + mType + ": " + e);
-		}
-	}
-
-	public dispose() {
-		CodingPanel.currentPanel = undefined;
-
-		// Clean up our resources
-		this._panel.dispose();
-
-		while (this._disposables.length) {
-			const x = this._disposables.pop();
-			if (x) {
-				x.dispose();
-			}
-		}
-	}
-
-	private _update() {
-		this._panel.title = "Choose Metadata Components";
-		this._panel.webview.html = this._getHtmlForWebview();
-	}
-
-	private handleInitLoadRequest() {
-		const cache = CodingPanel.readCache();
-		if (cache && cache.metadataObjects && cache.apiVersion === this.VERSION_NUM) {
-			console.log("Loading metadata types from cache");
-			this.readExistingPackageXML()
-				.then((mpExistingPackageXML) => {
-					this._panel.webview.postMessage({
-						command: "metadataObjects",
-						metadataObjects: cache.metadataObjects,
-						mpExistingPackageXML: mpExistingPackageXML,
-						fromCache: true,
-						cacheTimestamp: cache.timestamp,
-					});
-				})
-				.catch((err) => {
-					console.log(err);
-				});
-		} else {
-			this.readExistingPackageXML()
-				.then((mpExistingPackageXML) => {
-					this.getMetadataTypes(mpExistingPackageXML);
-				})
-				.catch((err) => {
-					console.log(err);
-				});
-		}
-	}
-
-	private handleUpdatePackageXml(metadataTypes) {
-		const mpPackage = this.buildSelectedMetadataMap(metadataTypes);
-		if (mpPackage.size == 0) {
-			vscode.window.showErrorMessage("Please select components for package.xml");
-			return;
-		}
-		this.generatePackageXML(mpPackage, false);
-	}
-
-	private handleCopyToClipboard(metadataTypes) {
-		const mpPackage = this.buildSelectedMetadataMap(metadataTypes);
-		if (mpPackage.size == 0) {
-			vscode.window.showErrorMessage("Please select components for package.xml");
-			return;
-		}
-		this.generatePackageXML(mpPackage, true);
-	}
-
-	private openUrl(url) {
-		vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(url));
-	}
-
-	private buildSelectedMetadataMap(metadataTypes) {
-		return buildSelectedMetadataMap(metadataTypes);
-	}
-
-	private readExistingPackageXML() {
-		console.log("Read existing packge.xml");
-		let mpExistingPackageXML = {};
-		let parser = new xml2js.Parser();
-
-		return new Promise((resolve, reject) => {
-			fs.readFile(
-				vscode.workspace.workspaceFolders[0].uri.fsPath + "/manifest/package.xml",
-				function (err, data) {
-					if (err) {
-						console.error(err);
-						resolve(mpExistingPackageXML);
-					}
-					parser.parseString(data, function (err, result) {
-						if (err) {
-							console.error(err);
-							resolve(mpExistingPackageXML);
-						}
-						console.log("Existing package.xml");
-						console.log(JSON.stringify(result));
-						if (!result || !result.Package || !result.Package.types) {
-							resolve(mpExistingPackageXML);
-						}
-
-						let types = result.Package.types;
-						for (let i = 0; i < types.length; i++) {
-							let type = types[i];
-
-							let name = type.name[0];
-							let members = type.members;
-							mpExistingPackageXML[name] = members;
-						}
-
-						console.log(mpExistingPackageXML);
-
-						resolve(mpExistingPackageXML);
-					});
-				},
-			);
-		});
-	}
-
-	private getMetadataTypes(mpExistingPackageXML) {
-		console.log("getMetadataTypes invoked");
-		vscode.window.withProgress(
-			{
-				location: vscode.ProgressLocation.Notification,
-				title: "Processing Metadata",
-				cancellable: true,
-			},
-			(progress, token) => {
-				token.onCancellationRequested(() => {
-					console.log("User canceled the long running operation");
-				});
-
-				console.log(
-					"vscode.workspace.workspaceFolders[0].uri.fsPath " +
-						vscode.workspace.workspaceFolders[0].uri.fsPath,
-				);
-
-				var p = new Promise((resolve) => {
-					var foo: child.ChildProcess = child.exec(
-						"sf org list metadata-types --api-version " + this.VERSION_NUM + " --json",
-						{
-							maxBuffer: 1024 * 1024 * 6,
-							cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
-						},
-					);
-					let bufferOutData = "";
-					foo.stdout.on("data", (dataArg: any) => {
-						console.log("dataArg " + dataArg);
-						bufferOutData += dataArg;
-					});
-
-					foo.stderr.on("data", (data: any) => {
-						console.log("stderr: " + data);
-					});
-
-					foo.stdin.on("data", (data: any) => {
-						console.log("stdin: " + data);
-					});
-
-					foo.on("exit", (code: number, signal: string) => {
-						console.log("exited with code " + code);
-						console.log("bufferOutData " + bufferOutData);
-						try {
-							let data = JSON.parse(bufferOutData);
-							let depArr = [];
-							let metadataObjectsArr = data.result.metadataObjects;
-
-							// Filter out metadata types that are deprecated or non-retrievable
-							metadataObjectsArr = metadataObjectsArr.filter((obj: any) => {
-								if (NON_RETRIEVABLE_TYPES.has(obj.xmlName)) {
-									console.log("Filtering out non-retrievable type: " + obj.xmlName);
-									return false;
-								}
-								return true;
-							});
-
-							for (let index = 0; index < metadataObjectsArr.length; index++) {
-								let obj = metadataObjectsArr[index];
-								console.log(obj.xmlName);
-								depArr.push(obj.xmlName);
-							}
-							// Write metadata types to cache
-							const cache = CodingPanel.readCache() || {};
-							cache.apiVersion = this.VERSION_NUM;
-							cache.metadataObjects = metadataObjectsArr;
-							if (!cache.children) {
-								cache.children = {};
-							}
-							CodingPanel.writeCache(cache);
-
-							this._panel.webview.postMessage({
-								command: "metadataObjects",
-								metadataObjects: metadataObjectsArr,
-								mpExistingPackageXML: mpExistingPackageXML,
-							});
-						} catch (e) {
-							console.error("Error parsing metadata types output: " + e);
-							vscode.window.showErrorMessage(
-								'Error fetching metadata types. Make sure SF CLI (sf) is installed, authenticated, and up to date. Run "sf org display --json" in your terminal to verify.',
-							);
-						}
-						resolve(undefined);
-					});
-					console.log(typeof foo.on);
-				});
-
-				return p;
-			},
-		);
-	}
-	private _getHtmlForWebview() {
-		// Local path to main script run in the webview
-		const scriptPathOnDisk = vscode.Uri.file(
-			path.join(this._extensionPath, "resources", "webview.js"),
-		);
-		const scriptUri = this._panel.webview.asWebviewUri(scriptPathOnDisk);
-
-		// Use a nonce to whitelist which scripts can be run
-		const nonce = getNonce();
-
-		return `<!DOCTYPE html>
+  /**
+   * Track the currently panel. Only allow a single panel to exist at a time.
+   */
+  public static currentPanel: CodingPanel | undefined;
+
+  public static readonly viewType = "Coding";
+
+  private readonly _panel: vscode.WebviewPanel;
+  private readonly _extensionPath: string;
+  private _disposables: vscode.Disposable[] = [];
+  private reportFolderMap = REPORT_FOLDER_MAP;
+  // WILDCARD_TYPES imported from packageUtils.ts
+
+  // NON_RETRIEVABLE_TYPES imported from packageUtils.ts
+
+  private VERSION_NUM = DEFAULT_API_VERSION;
+  private static CACHE_FILE_NAME = ".sf-package-generator-cache.json";
+  private infoMsg = "All metadata selected except ";
+
+  private static getCachePath(): string {
+    return path.join(
+      vscode.workspace.workspaceFolders[0].uri.fsPath,
+      ".sf",
+      CodingPanel.CACHE_FILE_NAME,
+    );
+  }
+
+  private static readCache(): any | null {
+    try {
+      const cachePath = CodingPanel.getCachePath();
+      if (!fs.existsSync(cachePath)) {
+        return null;
+      }
+      const raw = fs.readFileSync(cachePath, "utf-8");
+      const cache = JSON.parse(raw);
+      const age = Date.now() - (cache.timestamp || 0);
+      if (age > CACHE_TTL_MS) {
+        console.log(
+          "Cache expired (age: " + Math.round(age / 1000 / 60) + " min)",
+        );
+        return null;
+      }
+      console.log("Cache hit (age: " + Math.round(age / 1000 / 60) + " min)");
+      return cache;
+    } catch (e) {
+      console.error("Error reading cache: " + e);
+      return null;
+    }
+  }
+
+  private static writeCache(cache: any): void {
+    try {
+      const cachePath = CodingPanel.getCachePath();
+      const cacheDir = path.dirname(cachePath);
+      if (!fs.existsSync(cacheDir)) {
+        fs.mkdirSync(cacheDir, { recursive: true });
+      }
+      cache.timestamp = Date.now();
+      fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), "utf-8");
+      console.log("Cache written to " + cachePath);
+    } catch (e) {
+      console.error("Error writing cache: " + e);
+    }
+  }
+
+  private static clearCache(): void {
+    try {
+      const cachePath = CodingPanel.getCachePath();
+      if (fs.existsSync(cachePath)) {
+        fs.unlinkSync(cachePath);
+        console.log("Cache cleared");
+      }
+    } catch (e) {
+      console.error("Error clearing cache: " + e);
+    }
+  }
+
+  public static createOrShow(extensionPath: string) {
+    const column = vscode.window.activeTextEditor
+      ? vscode.window.activeTextEditor.viewColumn
+      : undefined;
+
+    // If we already have a panel, show it.
+    if (CodingPanel.currentPanel) {
+      CodingPanel.currentPanel._panel.reveal(column);
+      return;
+    }
+
+    // Otherwise, create a new panel.
+    const panel = vscode.window.createWebviewPanel(
+      CodingPanel.viewType,
+      "Choose Metadata Components",
+      column || vscode.ViewColumn.One,
+      {
+        // Enable javascript in the webview
+        enableScripts: true,
+        retainContextWhenHidden: true,
+      },
+    );
+    CodingPanel.currentPanel = new CodingPanel(panel, extensionPath);
+  }
+
+  public static revive(panel: vscode.WebviewPanel, extensionPath: string) {
+    CodingPanel.currentPanel = new CodingPanel(panel, extensionPath);
+  }
+
+  private constructor(panel: vscode.WebviewPanel, extensionPath: string) {
+    this._panel = panel;
+    this._extensionPath = extensionPath;
+
+    // Set the webview's initial html content
+    this._update();
+
+    // Listen for when the panel is disposed
+    // This happens when the user closes the panel or when the panel is closed programatically
+    this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
+
+    // Handle messages from the webview
+    this._panel.webview.onDidReceiveMessage(
+      async (message) => {
+        switch (message.command) {
+          case "fetchChildren":
+            console.log("onDidReceiveMessage fetchChildren");
+            let metadataType = message.metadataType;
+            this.fetchChildren(metadataType);
+            return;
+
+          case "buildPackageXML":
+            console.log("onDidReceiveMessage buildPackageXML");
+            this.buildPackageXML(message.selectedNodes, false);
+            return;
+
+          case "getMetadataTypes":
+            console.log("onDidReceiveMessage getMetadataTypes");
+            this.getMetadataTypes({});
+            return;
+
+          case "copyToClipboard":
+            console.log("onDidReceiveMessage copyToClipboard");
+            this.buildPackageXML(message.selectedNodes, true);
+            return;
+
+          case "selectAll":
+            console.log("onDidReceiveMessage selectAll");
+            let selectedMetadata = message.selectedMetadata;
+            let skippedMetadataTypes = message.skippedMetadataTypes;
+            this.fetchAllChildren(selectedMetadata, skippedMetadataTypes, 0);
+            return;
+          case "INIT_LOAD_REQUEST":
+            console.log("onDidReceiveMessage INIT_LOAD_REQUEST");
+            this.handleInitLoadRequest();
+            return;
+
+          case "FETCH_CHILDREN_REQUEST":
+            console.log("onDidReceiveMessage FETCH_CHILDREN");
+            this.fetchChildren(message.metadataType);
+            return;
+
+          case "UPDATE_PACKAGE_XML":
+            console.log("onDidReceiveMessage UPDATE_PACKAGE_XML");
+            this.handleUpdatePackageXml(message.metadataTypes);
+            return;
+
+          case "COPY_TO_CLIPBOARD":
+            console.log("onDidReceiveMessage COPY_TO_CLIPBOARD");
+            this.handleCopyToClipboard(message.metadataTypes);
+            return;
+
+          case "REFRESH_CACHE":
+            console.log("onDidReceiveMessage REFRESH_CACHE");
+            CodingPanel.clearCache();
+            this.handleInitLoadRequest();
+            return;
+
+          case "OPEN_URL":
+            console.log("onDidReceiveMessage OPEN_URL");
+            this.openUrl(message.url);
+            return;
+        }
+      },
+      null,
+      this._disposables,
+    );
+  }
+
+  private buildPackageXML(selectedNodes, isCopyToClipboard) {
+    console.log("Invoked buildPackageXML");
+    if (!selectedNodes || selectedNodes.length == 0) {
+      vscode.window.showErrorMessage(
+        "Please select components for package.xml",
+      );
+      return;
+    }
+
+    let mpPackage = this.buildPackageMap(selectedNodes);
+    this.generatePackageXML(mpPackage, isCopyToClipboard);
+  }
+
+  private buildPackageMap(selectedNodes) {
+    console.log("Invoked buildPackageMap");
+    const mpPackage = buildPackageMap(selectedNodes);
+    for (const [k, v] of mpPackage) {
+      console.log(k, v);
+    }
+    return mpPackage;
+  }
+
+  private generatePackageXML(mpPackage, isCopyToClipboard) {
+    console.log("Invoked generatePackageXML");
+    const xmlString = generatePackageXmlString(mpPackage, this.VERSION_NUM);
+    if (!xmlString) {
+      console.log("generatePackageXML: empty map, nothing to generate");
+      return;
+    }
+    console.log(xmlString);
+
+    if (isCopyToClipboard) {
+      console.log("Copy to Clipboard - Initiated");
+      console.log(clipboardy);
+      clipboardy.write(xmlString).then((result) => {
+        console.log(result);
+        vscode.window.showInformationMessage(
+          "Contents Copied to Clipboard successfully!!",
+        );
+      });
+    } else {
+      fs.writeFile(
+        vscode.workspace.workspaceFolders[0].uri.fsPath +
+          "/manifest/package.xml",
+        xmlString,
+        (err) => {
+          if (err) {
+            console.log(err);
+            vscode.window.showErrorMessage(err);
+          }
+          console.log("Successfully Written to File.");
+          vscode.workspace
+            .openTextDocument(
+              vscode.workspace.workspaceFolders[0].uri.fsPath +
+                "/manifest/package.xml",
+            )
+            .then((data) => {
+              console.log("Opened " + data.fileName);
+              vscode.window.showTextDocument(data);
+            });
+        },
+      );
+    }
+  }
+
+  private fetchChildren(metadataType) {
+    console.log("Invoked fetchChildren");
+    let mType = metadataType.id;
+    let node = metadataType;
+    console.log("Invoked fetchChildren " + JSON.stringify(node));
+
+    // Check cache for this metadata type's children
+    const cache = CodingPanel.readCache();
+    if (
+      cache &&
+      cache.children &&
+      cache.children[mType] &&
+      cache.apiVersion === this.VERSION_NUM
+    ) {
+      console.log("Loading children for " + mType + " from cache");
+      this._panel.webview.postMessage({
+        command: "listmetadata",
+        results: cache.children[mType],
+        metadataType: mType,
+      });
+      return;
+    }
+
+    if (!node.inFolder) {
+      vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Processing Metadata : " + mType,
+          cancellable: true,
+        },
+        (progress, token) => {
+          token.onCancellationRequested(() => {
+            console.log("User canceled the long running operation");
+          });
+
+          var p = new Promise<void>((resolve) => {
+            let sfCmd =
+              "sf org list metadata --metadata-type " +
+              mType +
+              " --api-version " +
+              this.VERSION_NUM +
+              " --json";
+            let foo: child.ChildProcess = child.exec(sfCmd, {
+              cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
+            });
+
+            let bufferOutData = "";
+
+            foo.stdout.on("data", (dataArg: any) => {
+              console.log("stdout: " + dataArg);
+              bufferOutData += dataArg;
+            });
+
+            foo.stderr.on("data", (data: any) => {
+              console.log("stderr: " + data);
+            });
+
+            foo.stdin.on("data", (data: any) => {
+              console.log("stdin: " + data);
+            });
+
+            foo.on("exit", (code, signal) => {
+              console.log("exit code " + code);
+              console.log("bufferOutData " + bufferOutData);
+              try {
+                let data = JSON.parse(bufferOutData);
+                let results = data.result;
+                // Cache the children results
+                this.cacheChildrenResults(mType, results);
+                this._panel.webview.postMessage({
+                  command: "listmetadata",
+                  results: results,
+                  metadataType: mType,
+                });
+              } catch (e) {
+                console.error(
+                  "Error parsing list metadata output for " + mType + ": " + e,
+                );
+                vscode.window.showErrorMessage(
+                  "Error fetching metadata for " +
+                    mType +
+                    ". Make sure your SF CLI is authenticated and up to date.",
+                );
+                this._panel.webview.postMessage({
+                  command: "listmetadata",
+                  results: [],
+                  metadataType: mType,
+                });
+              }
+              resolve();
+            });
+          });
+
+          return p;
+        },
+      );
+    } else {
+      //get the folder
+
+      let folderType = this.reportFolderMap[mType];
+      let sfCmd =
+        "sf org list metadata --metadata-type " +
+        folderType +
+        " --api-version " +
+        this.VERSION_NUM +
+        " --json";
+
+      vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Processing Metadata : " + folderType,
+          cancellable: true,
+        },
+        (progress, token) => {
+          token.onCancellationRequested(() => {
+            console.log("User canceled the long running operation");
+          });
+
+          var p = new Promise((resolve) => {
+            let foo: child.ChildProcess = child.exec(sfCmd, {
+              maxBuffer: 1024 * 1024 * 6,
+              cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
+            });
+
+            let bufferOutData = "";
+
+            foo.stdout.on("data", (dataArg: any) => {
+              console.log("stdout: " + dataArg);
+              bufferOutData += dataArg;
+            });
+
+            foo.stderr.on("data", (data: any) => {
+              console.log("stderr: " + data);
+            });
+
+            foo.stdin.on("data", (data: any) => {
+              console.log("stdin: " + data);
+            });
+
+            foo.on("exit", (code, signal) => {
+              console.log("exit code " + code);
+              console.log("bufferOutData " + bufferOutData);
+              try {
+                let data = JSON.parse(bufferOutData);
+                let folderNames = [];
+                let results = data.result;
+
+                if (!results || results.length == 0) {
+                  //no folders
+                  this._panel.webview.postMessage({
+                    command: "listmetadata",
+                    results: results,
+                    metadataType: mType,
+                  });
+                  resolve(undefined);
+                  return;
+                } else if (!Array.isArray(results)) {
+                  //1 folder
+                  folderNames.push(results.fullName);
+                } else {
+                  //many folders
+                  for (let i = 0; i < results.length; i++) {
+                    folderNames.push(results[i].fullName);
+                  }
+                }
+
+                //get the components inside each folder
+                this.getComponentsInsideFolders(folderNames, mType, 0, []);
+              } catch (e) {
+                console.error(
+                  "Error parsing list metadata output for folder type " +
+                    folderType +
+                    ": " +
+                    e,
+                );
+                vscode.window.showErrorMessage(
+                  "Error fetching folder metadata. Make sure your SF CLI is authenticated and up to date.",
+                );
+                this._panel.webview.postMessage({
+                  command: "listmetadata",
+                  results: [],
+                  metadataType: mType,
+                });
+              }
+              resolve(undefined);
+            });
+          });
+
+          return p;
+        },
+      );
+    }
+  }
+
+  public fetchAllChildren(selectedMetadata, skippedMetadataTypes, index) {
+    console.log("Invoked fetchAllChildren");
+    if (!selectedMetadata || selectedMetadata.length == 0) {
+      return;
+    }
+
+    if (index == selectedMetadata.length) {
+      //end condition
+      let mpKeys = [];
+      for (let key in this.reportFolderMap) {
+        mpKeys.push(key);
+      }
+      vscode.window.showInformationMessage(
+        this.infoMsg + skippedMetadataTypes.join(),
+      ); //Modified for #18
+      return;
+    }
+
+    let mType = selectedMetadata[index];
+
+    vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "Processing Metadata : " + mType,
+        cancellable: true,
+      },
+      (progress, token) => {
+        token.onCancellationRequested(() => {
+          console.log("User canceled the long running operation");
+        });
+
+        var p = new Promise((resolve) => {
+          let sfCmd =
+            "sf org list metadata --metadata-type " +
+            mType +
+            " --api-version " +
+            this.VERSION_NUM +
+            " --json";
+          let foo: child.ChildProcess = child.exec(sfCmd, {
+            cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
+          });
+
+          let bufferOutData = "";
+
+          foo.stdout.on("data", (dataArg: any) => {
+            console.log("stdout: " + dataArg);
+            bufferOutData += dataArg;
+          });
+
+          foo.stderr.on("data", (data: any) => {
+            console.log("stderr: " + data);
+          });
+
+          foo.stdin.on("data", (data: any) => {
+            console.log("stdin: " + data);
+          });
+
+          foo.on("exit", (code, signal) => {
+            console.log("exit code " + code);
+            console.log("bufferOutData " + bufferOutData);
+            try {
+              let data = JSON.parse(bufferOutData);
+              let results = data.result;
+              this._panel.webview.postMessage({
+                command: "listmetadata",
+                results: results,
+                metadataType: mType,
+              });
+            } catch (e) {
+              console.error(
+                "Error parsing list metadata output for " + mType + ": " + e,
+              );
+              this._panel.webview.postMessage({
+                command: "listmetadata",
+                results: [],
+                metadataType: mType,
+              });
+            }
+            resolve(undefined);
+            this.fetchAllChildren(
+              selectedMetadata,
+              skippedMetadataTypes,
+              ++index,
+            ); //recurse through other metadata
+          });
+        });
+
+        return p;
+      },
+    );
+  }
+  public getComponentsInsideFolders(folderNames, mType, index, resultsArr) {
+    if (index == folderNames.length) {
+      // Cache the combined folder results
+      this.cacheChildrenResults(mType, resultsArr);
+      this._panel.webview.postMessage({
+        command: "listmetadata",
+        results: resultsArr,
+        metadataType: mType,
+      });
+      return;
+    }
+
+    vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "Processing Metadata : " + mType + ":" + folderNames[index],
+        cancellable: true,
+      },
+      (progress, token) => {
+        token.onCancellationRequested(() => {
+          console.log("User canceled the long running operation");
+        });
+
+        var p = new Promise((resolve) => {
+          let sfCmd =
+            "sf org list metadata --metadata-type " +
+            mType +
+            " --folder " +
+            folderNames[index] +
+            " --api-version " +
+            this.VERSION_NUM +
+            " --json";
+          let foo: child.ChildProcess = child.exec(sfCmd, {
+            maxBuffer: 1024 * 1024 * 6,
+            cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
+          });
+
+          let bufferOutData = "";
+
+          foo.stdout.on("data", (dataArg: any) => {
+            console.log("stdout: " + dataArg);
+            bufferOutData += dataArg;
+          });
+
+          foo.stderr.on("data", (data: any) => {
+            console.log("stderr: " + data);
+          });
+
+          foo.stdin.on("data", (data: any) => {
+            console.log("stdin: " + data);
+          });
+
+          foo.on("exit", (code, signal) => {
+            console.log("exit code " + code);
+            console.log("bufferOutData " + bufferOutData);
+            try {
+              let data = JSON.parse(bufferOutData);
+              let results = data.result;
+
+              if (results) {
+                if (!Array.isArray(results)) {
+                  //1 folder
+                  resultsArr.push(results);
+                } else {
+                  //many folders
+                  for (let i = 0; i < results.length; i++) {
+                    resultsArr.push(results[i]);
+                  }
+                }
+              }
+            } catch (e) {
+              console.error(
+                "Error parsing list metadata output for folder " +
+                  folderNames[index] +
+                  ": " +
+                  e,
+              );
+            }
+
+            resolve(undefined);
+            console.log("After resolve getComponentsInsideFolders");
+            this.getComponentsInsideFolders(
+              folderNames,
+              mType,
+              ++index,
+              resultsArr,
+            );
+          });
+        });
+
+        return p;
+      },
+    );
+  }
+
+  private cacheChildrenResults(mType: string, results: any): void {
+    try {
+      const cache = CodingPanel.readCache() || {
+        apiVersion: this.VERSION_NUM,
+        children: {},
+      };
+      if (!cache.children) {
+        cache.children = {};
+      }
+      cache.children[mType] = results;
+      CodingPanel.writeCache(cache);
+    } catch (e) {
+      console.error("Error caching children for " + mType + ": " + e);
+    }
+  }
+
+  public dispose() {
+    CodingPanel.currentPanel = undefined;
+
+    // Clean up our resources
+    this._panel.dispose();
+
+    while (this._disposables.length) {
+      const x = this._disposables.pop();
+      if (x) {
+        x.dispose();
+      }
+    }
+  }
+
+  private _update() {
+    this._panel.title = "Choose Metadata Components";
+    this._panel.webview.html = this._getHtmlForWebview();
+  }
+
+  private handleInitLoadRequest() {
+    const cache = CodingPanel.readCache();
+    if (
+      cache &&
+      cache.metadataObjects &&
+      cache.apiVersion === this.VERSION_NUM
+    ) {
+      console.log("Loading metadata types from cache");
+      this.readExistingPackageXML()
+        .then((mpExistingPackageXML) => {
+          this._panel.webview.postMessage({
+            command: "metadataObjects",
+            metadataObjects: cache.metadataObjects,
+            mpExistingPackageXML: mpExistingPackageXML,
+            fromCache: true,
+            cacheTimestamp: cache.timestamp,
+          });
+        })
+        .catch((err) => {
+          console.log(err);
+        });
+    } else {
+      this.readExistingPackageXML()
+        .then((mpExistingPackageXML) => {
+          this.getMetadataTypes(mpExistingPackageXML);
+        })
+        .catch((err) => {
+          console.log(err);
+        });
+    }
+  }
+
+  private handleUpdatePackageXml(metadataTypes) {
+    const mpPackage = this.buildSelectedMetadataMap(metadataTypes);
+    if (mpPackage.size == 0) {
+      vscode.window.showErrorMessage(
+        "Please select components for package.xml",
+      );
+      return;
+    }
+    this.generatePackageXML(mpPackage, false);
+  }
+
+  private handleCopyToClipboard(metadataTypes) {
+    const mpPackage = this.buildSelectedMetadataMap(metadataTypes);
+    if (mpPackage.size == 0) {
+      vscode.window.showErrorMessage(
+        "Please select components for package.xml",
+      );
+      return;
+    }
+    this.generatePackageXML(mpPackage, true);
+  }
+
+  private openUrl(url) {
+    vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(url));
+  }
+
+  private buildSelectedMetadataMap(metadataTypes) {
+    return buildSelectedMetadataMap(metadataTypes);
+  }
+
+  private readExistingPackageXML() {
+    console.log("Read existing packge.xml");
+    let mpExistingPackageXML = {};
+    let parser = new xml2js.Parser();
+
+    return new Promise((resolve, reject) => {
+      fs.readFile(
+        vscode.workspace.workspaceFolders[0].uri.fsPath +
+          "/manifest/package.xml",
+        function (err, data) {
+          if (err) {
+            console.error(err);
+            resolve(mpExistingPackageXML);
+          }
+          parser.parseString(data, function (err, result) {
+            if (err) {
+              console.error(err);
+              resolve(mpExistingPackageXML);
+            }
+            console.log("Existing package.xml");
+            console.log(JSON.stringify(result));
+            if (!result || !result.Package || !result.Package.types) {
+              resolve(mpExistingPackageXML);
+            }
+
+            let types = result.Package.types;
+            for (let i = 0; i < types.length; i++) {
+              let type = types[i];
+
+              let name = type.name[0];
+              let members = type.members;
+              mpExistingPackageXML[name] = members;
+            }
+
+            console.log(mpExistingPackageXML);
+
+            resolve(mpExistingPackageXML);
+          });
+        },
+      );
+    });
+  }
+
+  private getMetadataTypes(mpExistingPackageXML) {
+    console.log("getMetadataTypes invoked");
+    vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "Processing Metadata",
+        cancellable: true,
+      },
+      (progress, token) => {
+        token.onCancellationRequested(() => {
+          console.log("User canceled the long running operation");
+        });
+
+        console.log(
+          "vscode.workspace.workspaceFolders[0].uri.fsPath " +
+            vscode.workspace.workspaceFolders[0].uri.fsPath,
+        );
+
+        var p = new Promise((resolve) => {
+          var foo: child.ChildProcess = child.exec(
+            "sf org list metadata-types --api-version " +
+              this.VERSION_NUM +
+              " --json",
+            {
+              maxBuffer: 1024 * 1024 * 6,
+              cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
+            },
+          );
+          let bufferOutData = "";
+          foo.stdout.on("data", (dataArg: any) => {
+            console.log("dataArg " + dataArg);
+            bufferOutData += dataArg;
+          });
+
+          foo.stderr.on("data", (data: any) => {
+            console.log("stderr: " + data);
+          });
+
+          foo.stdin.on("data", (data: any) => {
+            console.log("stdin: " + data);
+          });
+
+          foo.on("exit", (code: number, signal: string) => {
+            console.log("exited with code " + code);
+            console.log("bufferOutData " + bufferOutData);
+            try {
+              let data = JSON.parse(bufferOutData);
+              let depArr = [];
+              let metadataObjectsArr = data.result.metadataObjects;
+
+              // Filter out metadata types that are deprecated or non-retrievable
+              metadataObjectsArr = metadataObjectsArr.filter((obj: any) => {
+                if (NON_RETRIEVABLE_TYPES.has(obj.xmlName)) {
+                  console.log(
+                    "Filtering out non-retrievable type: " + obj.xmlName,
+                  );
+                  return false;
+                }
+                return true;
+              });
+
+              for (let index = 0; index < metadataObjectsArr.length; index++) {
+                let obj = metadataObjectsArr[index];
+                console.log(obj.xmlName);
+                depArr.push(obj.xmlName);
+              }
+              // Write metadata types to cache
+              const cache = CodingPanel.readCache() || {};
+              cache.apiVersion = this.VERSION_NUM;
+              cache.metadataObjects = metadataObjectsArr;
+              if (!cache.children) {
+                cache.children = {};
+              }
+              CodingPanel.writeCache(cache);
+
+              this._panel.webview.postMessage({
+                command: "metadataObjects",
+                metadataObjects: metadataObjectsArr,
+                mpExistingPackageXML: mpExistingPackageXML,
+              });
+            } catch (e) {
+              console.error("Error parsing metadata types output: " + e);
+              vscode.window.showErrorMessage(
+                'Error fetching metadata types. Make sure SF CLI (sf) is installed, authenticated, and up to date. Run "sf org display --json" in your terminal to verify.',
+              );
+            }
+            resolve(undefined);
+          });
+          console.log(typeof foo.on);
+        });
+
+        return p;
+      },
+    );
+  }
+  private _getHtmlForWebview() {
+    // Local path to main script run in the webview
+    const scriptPathOnDisk = vscode.Uri.file(
+      path.join(this._extensionPath, "resources", "webview.js"),
+    );
+    const scriptUri = this._panel.webview.asWebviewUri(scriptPathOnDisk);
+
+    // Use a nonce to whitelist which scripts can be run
+    const nonce = getNonce();
+
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
 	<meta charset="UTF-8">
@@ -1252,14 +1303,15 @@ class CodingPanel {
 	<script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
-	}
+  }
 }
 
 function getNonce() {
-	let text = "";
-	const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-	for (let i = 0; i < 32; i++) {
-		text += possible.charAt(Math.floor(Math.random() * possible.length));
-	}
-	return text;
+  let text = "";
+  const possible =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  for (let i = 0; i < 32; i++) {
+    text += possible.charAt(Math.floor(Math.random() * possible.length));
+  }
+  return text;
 }
