@@ -1,6 +1,6 @@
 {
   "name": "sf-package-xml-generator",
-  "displayName": "Salesforce Package.xml Generator Extension for VS Code",
+  "displayName": "SF Package.xml Generator",
   "description": "Extension for generating Package.xml on the Salesforce Platform",
   "version": "1.0.0",
   "publisher": "jqda0",
