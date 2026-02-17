@@ -1,0 +1,16 @@
+.github/**
+.husky/**
+.vscode/**
+.vscode-test/**
+src/**
+dist/test/**
+node_modules/**
+.gitignore
+.gitattributes
+.mocharc.yml
+eslint.config.mjs
+tsconfig.json
+**/*.ts
+**/*.map
+*.vsix
+.DS_Store
