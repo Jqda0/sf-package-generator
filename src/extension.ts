@@ -15,6 +15,42 @@ const fs = require("fs");
 const xml2js = require("xml2js");
 let DEFAULT_API_VERSION = "";
 
+/**
+ * Resolve the full path to the `sf` CLI binary.
+ * VS Code may not inherit the user's full shell PATH when launched
+ * from Dock/Finder, so we check common install locations.
+ */
+function getSfCommand(): string {
+  const candidates = [
+    "sf", // default PATH
+    "/usr/local/bin/sf",
+    "/opt/homebrew/bin/sf",
+    path.join(
+      process.env.HOME || "~",
+      ".nvm/versions/node",
+      process.version,
+      "bin/sf",
+    ),
+    path.join(process.env.HOME || "~", ".local/bin/sf"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (candidate === "sf") {
+        child.execSync("which sf", { stdio: "ignore" });
+        return "sf";
+      }
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    } catch {
+      // continue to next candidate
+    }
+  }
+  return "sf"; // fallback — will produce a clear error if not found
+}
+
+const SF_CMD = getSfCommand();
+
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("sfPackageGen.chooseMetadata", async () => {
@@ -28,7 +64,7 @@ export function activate(context: vscode.ExtensionContext) {
 function getAPIVersion(): Promise<string> {
   console.log("getAPIVersion invoked");
   return new Promise((resolve, _reject) => {
-    const sfCmd = "sf org display --json";
+    const sfCmd = SF_CMD + " org display --json";
     const foo: child.ChildProcess = child.exec(sfCmd, {
       maxBuffer: 1024 * 1024 * 6,
       cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
@@ -361,7 +397,8 @@ class CodingPanel {
 
           const p = new Promise<void>((resolve) => {
             const sfCmd =
-              "sf org list metadata --metadata-type " +
+              SF_CMD +
+              " org list metadata --metadata-type " +
               mType +
               " --api-version " +
               this.VERSION_NUM +
@@ -425,7 +462,8 @@ class CodingPanel {
 
       const folderType = this.reportFolderMap[mType];
       const sfCmd =
-        "sf org list metadata --metadata-type " +
+        SF_CMD +
+        " org list metadata --metadata-type " +
         folderType +
         " --api-version " +
         this.VERSION_NUM +
@@ -551,7 +589,8 @@ class CodingPanel {
 
         const p = new Promise((resolve) => {
           const sfCmd =
-            "sf org list metadata --metadata-type " +
+            SF_CMD +
+            " org list metadata --metadata-type " +
             mType +
             " --api-version " +
             this.VERSION_NUM +
@@ -634,7 +673,8 @@ class CodingPanel {
 
         const p = new Promise((resolve) => {
           const sfCmd =
-            "sf org list metadata --metadata-type " +
+            SF_CMD +
+            " org list metadata --metadata-type " +
             mType +
             " --folder " +
             folderNames[index] +
@@ -864,7 +904,8 @@ class CodingPanel {
 
         const p = new Promise((resolve) => {
           const foo: child.ChildProcess = child.exec(
-            "sf org list metadata-types --api-version " +
+            SF_CMD +
+              " org list metadata-types --api-version " +
               this.VERSION_NUM +
               " --json",
             {
