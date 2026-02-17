@@ -11,7 +11,6 @@ import {
   generatePackageXmlString,
 } from "./packageUtils.js";
 
-let clipboardy: any;
 const fs = require("fs");
 const xml2js = require("xml2js");
 let DEFAULT_API_VERSION = "";
@@ -19,10 +18,6 @@ let DEFAULT_API_VERSION = "";
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("sfPackageGen.chooseMetadata", async () => {
-      // Dynamically import clipboardy
-      const module = await import("clipboardy");
-      clipboardy = module.default || module; // Handle both default and named exports
-      console.log(clipboardy);
       DEFAULT_API_VERSION = await getAPIVersion();
       console.log("DEFAULT_API_VERSION " + DEFAULT_API_VERSION);
       CodingPanel.createOrShow(context.extensionPath);
@@ -299,9 +294,7 @@ class CodingPanel {
 
     if (isCopyToClipboard) {
       console.log("Copy to Clipboard - Initiated");
-      console.log(clipboardy);
-      clipboardy.write(xmlString).then((result) => {
-        console.log(result);
+      vscode.env.clipboard.writeText(xmlString).then(() => {
         vscode.window.showInformationMessage(
           "Contents Copied to Clipboard successfully!!",
         );
