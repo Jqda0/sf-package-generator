@@ -873,6 +873,7 @@ class CodingPanel {
             },
           );
           let bufferOutData = "";
+          let stderrData = "";
           foo.stdout.on("data", (dataArg: any) => {
             console.log("dataArg " + dataArg);
             bufferOutData += dataArg;
@@ -880,15 +881,29 @@ class CodingPanel {
 
           foo.stderr.on("data", (data: any) => {
             console.log("stderr: " + data);
+            stderrData += data;
           });
 
           foo.stdin.on("data", (data: any) => {
             console.log("stdin: " + data);
           });
 
+          foo.on("error", (err: any) => {
+            console.error("Failed to start sf command: " + err);
+            vscode.window.showErrorMessage(
+              "Failed to run SF CLI. Make sure 'sf' is installed and available in your PATH. Error: " +
+                err.message,
+            );
+            resolve(undefined);
+          });
+
           foo.on("exit", (code: number, _signal: string) => {
             console.log("exited with code " + code);
             console.log("bufferOutData " + bufferOutData);
+            if (code !== 0) {
+              console.error("sf command exited with code " + code);
+              console.error("stderr: " + stderrData);
+            }
             try {
               const data = JSON.parse(bufferOutData);
               const depArr = [];
@@ -926,8 +941,19 @@ class CodingPanel {
               });
             } catch (e) {
               console.error("Error parsing metadata types output: " + e);
+              console.error("stdout was: " + bufferOutData);
+              console.error("stderr was: " + stderrData);
+              let errorDetail = "";
+              if (!bufferOutData || bufferOutData.trim() === "") {
+                errorDetail =
+                  "No output received from SF CLI. Make sure 'sf' is installed and in your PATH.";
+              } else if (stderrData) {
+                errorDetail = stderrData.substring(0, 200);
+              } else {
+                errorDetail = String(e);
+              }
               vscode.window.showErrorMessage(
-                'Error fetching metadata types. Make sure SF CLI (sf) is installed, authenticated, and up to date. Run "sf org display --json" in your terminal to verify.',
+                "Error fetching metadata types: " + errorDetail,
               );
             }
             resolve(undefined);

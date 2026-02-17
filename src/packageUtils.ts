@@ -5,7 +5,7 @@
 
 // ── Constants ──
 
-export const FALLBACK_API_VERSION = "62.0";
+export const FALLBACK_API_VERSION = "65.0";
 
 export const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
