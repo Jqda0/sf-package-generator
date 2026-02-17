@@ -11,7 +11,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     # Skip if the last commit was a version bump to avoid infinite loops
-    if: "!contains(github.event.head_commit.message, 'chore: bump version')"
+    if: "!contains(github.event.head_commit.message, 'chore: bump version') && !startsWith(github.event.head_commit.message, 'v')"
 
     steps:
       - uses: actions/checkout@v4
@@ -40,11 +40,9 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
-      - name: Push version bump commit and tag
+      - name: Push version bump and tag
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          git add package.json package-lock.json
-          git commit -m "chore: bump version to $VERSION"
-          git tag "v$VERSION"
+          git tag "v$VERSION" || true
           git push
           git push --tags
