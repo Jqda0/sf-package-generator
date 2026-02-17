@@ -4,7 +4,6 @@ import * as child from "child_process";
 import {
   FALLBACK_API_VERSION,
   CACHE_TTL_MS,
-  WILDCARD_TYPES,
   NON_RETRIEVABLE_TYPES,
   REPORT_FOLDER_MAP,
   buildPackageMap,
@@ -13,8 +12,8 @@ import {
 } from "./packageUtils.js";
 
 let clipboardy: any;
-var fs = require("fs");
-var xml2js = require("xml2js");
+const fs = require("fs");
+const xml2js = require("xml2js");
 let DEFAULT_API_VERSION = "";
 
 export function activate(context: vscode.ExtensionContext) {
@@ -33,9 +32,9 @@ export function activate(context: vscode.ExtensionContext) {
 
 function getAPIVersion(): Promise<string> {
   console.log("getAPIVersion invoked");
-  return new Promise((resolve, reject) => {
-    let sfCmd = "sf org display --json";
-    let foo: child.ChildProcess = child.exec(sfCmd, {
+  return new Promise((resolve, _reject) => {
+    const sfCmd = "sf org display --json";
+    const foo: child.ChildProcess = child.exec(sfCmd, {
       maxBuffer: 1024 * 1024 * 6,
       cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
     });
@@ -51,11 +50,11 @@ function getAPIVersion(): Promise<string> {
       stderrData += data;
     });
 
-    foo.on("exit", (code: number, signal: string) => {
+    foo.on("exit", (code: number, _signal: string) => {
       console.log("exited with code " + code);
       console.log("bufferOutData " + bufferOutData);
       try {
-        let data = JSON.parse(bufferOutData);
+        const data = JSON.parse(bufferOutData);
         // SF CLI v2 may nest result differently
         let apiVersion = data?.result?.apiVersion;
         if (!apiVersion) {
@@ -201,11 +200,12 @@ class CodingPanel {
     this._panel.webview.onDidReceiveMessage(
       async (message) => {
         switch (message.command) {
-          case "fetchChildren":
+          case "fetchChildren": {
             console.log("onDidReceiveMessage fetchChildren");
-            let metadataType = message.metadataType;
+            const metadataType = message.metadataType;
             this.fetchChildren(metadataType);
             return;
+          }
 
           case "buildPackageXML":
             console.log("onDidReceiveMessage buildPackageXML");
@@ -222,12 +222,13 @@ class CodingPanel {
             this.buildPackageXML(message.selectedNodes, true);
             return;
 
-          case "selectAll":
+          case "selectAll": {
             console.log("onDidReceiveMessage selectAll");
-            let selectedMetadata = message.selectedMetadata;
-            let skippedMetadataTypes = message.skippedMetadataTypes;
+            const selectedMetadata = message.selectedMetadata;
+            const skippedMetadataTypes = message.skippedMetadataTypes;
             this.fetchAllChildren(selectedMetadata, skippedMetadataTypes, 0);
             return;
+          }
           case "INIT_LOAD_REQUEST":
             console.log("onDidReceiveMessage INIT_LOAD_REQUEST");
             this.handleInitLoadRequest();
@@ -274,7 +275,7 @@ class CodingPanel {
       return;
     }
 
-    let mpPackage = this.buildPackageMap(selectedNodes);
+    const mpPackage = this.buildPackageMap(selectedNodes);
     this.generatePackageXML(mpPackage, isCopyToClipboard);
   }
 
@@ -332,8 +333,8 @@ class CodingPanel {
 
   private fetchChildren(metadataType) {
     console.log("Invoked fetchChildren");
-    let mType = metadataType.id;
-    let node = metadataType;
+    const mType = metadataType.id;
+    const node = metadataType;
     console.log("Invoked fetchChildren " + JSON.stringify(node));
 
     // Check cache for this metadata type's children
@@ -365,14 +366,14 @@ class CodingPanel {
             console.log("User canceled the long running operation");
           });
 
-          var p = new Promise<void>((resolve) => {
-            let sfCmd =
+          const p = new Promise<void>((resolve) => {
+            const sfCmd =
               "sf org list metadata --metadata-type " +
               mType +
               " --api-version " +
               this.VERSION_NUM +
               " --json";
-            let foo: child.ChildProcess = child.exec(sfCmd, {
+            const foo: child.ChildProcess = child.exec(sfCmd, {
               cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
             });
 
@@ -391,12 +392,12 @@ class CodingPanel {
               console.log("stdin: " + data);
             });
 
-            foo.on("exit", (code, signal) => {
+            foo.on("exit", (code, _signal) => {
               console.log("exit code " + code);
               console.log("bufferOutData " + bufferOutData);
               try {
-                let data = JSON.parse(bufferOutData);
-                let results = data.result;
+                const data = JSON.parse(bufferOutData);
+                const results = data.result;
                 // Cache the children results
                 this.cacheChildrenResults(mType, results);
                 this._panel.webview.postMessage({
@@ -429,8 +430,8 @@ class CodingPanel {
     } else {
       //get the folder
 
-      let folderType = this.reportFolderMap[mType];
-      let sfCmd =
+      const folderType = this.reportFolderMap[mType];
+      const sfCmd =
         "sf org list metadata --metadata-type " +
         folderType +
         " --api-version " +
@@ -448,8 +449,8 @@ class CodingPanel {
             console.log("User canceled the long running operation");
           });
 
-          var p = new Promise((resolve) => {
-            let foo: child.ChildProcess = child.exec(sfCmd, {
+          const p = new Promise((resolve) => {
+            const foo: child.ChildProcess = child.exec(sfCmd, {
               maxBuffer: 1024 * 1024 * 6,
               cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
             });
@@ -469,13 +470,13 @@ class CodingPanel {
               console.log("stdin: " + data);
             });
 
-            foo.on("exit", (code, signal) => {
+            foo.on("exit", (code, _signal) => {
               console.log("exit code " + code);
               console.log("bufferOutData " + bufferOutData);
               try {
-                let data = JSON.parse(bufferOutData);
-                let folderNames = [];
-                let results = data.result;
+                const data = JSON.parse(bufferOutData);
+                const folderNames = [];
+                const results = data.result;
 
                 if (!results || results.length == 0) {
                   //no folders
@@ -532,8 +533,8 @@ class CodingPanel {
 
     if (index == selectedMetadata.length) {
       //end condition
-      let mpKeys = [];
-      for (let key in this.reportFolderMap) {
+      const mpKeys = [];
+      for (const key in this.reportFolderMap) {
         mpKeys.push(key);
       }
       vscode.window.showInformationMessage(
@@ -542,7 +543,7 @@ class CodingPanel {
       return;
     }
 
-    let mType = selectedMetadata[index];
+    const mType = selectedMetadata[index];
 
     vscode.window.withProgress(
       {
@@ -555,14 +556,14 @@ class CodingPanel {
           console.log("User canceled the long running operation");
         });
 
-        var p = new Promise((resolve) => {
-          let sfCmd =
+        const p = new Promise((resolve) => {
+          const sfCmd =
             "sf org list metadata --metadata-type " +
             mType +
             " --api-version " +
             this.VERSION_NUM +
             " --json";
-          let foo: child.ChildProcess = child.exec(sfCmd, {
+          const foo: child.ChildProcess = child.exec(sfCmd, {
             cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
           });
 
@@ -581,12 +582,12 @@ class CodingPanel {
             console.log("stdin: " + data);
           });
 
-          foo.on("exit", (code, signal) => {
+          foo.on("exit", (code, _signal) => {
             console.log("exit code " + code);
             console.log("bufferOutData " + bufferOutData);
             try {
-              let data = JSON.parse(bufferOutData);
-              let results = data.result;
+              const data = JSON.parse(bufferOutData);
+              const results = data.result;
               this._panel.webview.postMessage({
                 command: "listmetadata",
                 results: results,
@@ -638,8 +639,8 @@ class CodingPanel {
           console.log("User canceled the long running operation");
         });
 
-        var p = new Promise((resolve) => {
-          let sfCmd =
+        const p = new Promise((resolve) => {
+          const sfCmd =
             "sf org list metadata --metadata-type " +
             mType +
             " --folder " +
@@ -647,7 +648,7 @@ class CodingPanel {
             " --api-version " +
             this.VERSION_NUM +
             " --json";
-          let foo: child.ChildProcess = child.exec(sfCmd, {
+          const foo: child.ChildProcess = child.exec(sfCmd, {
             maxBuffer: 1024 * 1024 * 6,
             cwd: vscode.workspace.workspaceFolders[0].uri.fsPath,
           });
@@ -667,12 +668,12 @@ class CodingPanel {
             console.log("stdin: " + data);
           });
 
-          foo.on("exit", (code, signal) => {
+          foo.on("exit", (code, _signal) => {
             console.log("exit code " + code);
             console.log("bufferOutData " + bufferOutData);
             try {
-              let data = JSON.parse(bufferOutData);
-              let results = data.result;
+              const data = JSON.parse(bufferOutData);
+              const results = data.result;
 
               if (results) {
                 if (!Array.isArray(results)) {
@@ -809,10 +810,10 @@ class CodingPanel {
 
   private readExistingPackageXML() {
     console.log("Read existing packge.xml");
-    let mpExistingPackageXML = {};
-    let parser = new xml2js.Parser();
+    const mpExistingPackageXML = {};
+    const parser = new xml2js.Parser();
 
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, _reject) => {
       fs.readFile(
         vscode.workspace.workspaceFolders[0].uri.fsPath +
           "/manifest/package.xml",
@@ -832,12 +833,12 @@ class CodingPanel {
               resolve(mpExistingPackageXML);
             }
 
-            let types = result.Package.types;
+            const types = result.Package.types;
             for (let i = 0; i < types.length; i++) {
-              let type = types[i];
+              const type = types[i];
 
-              let name = type.name[0];
-              let members = type.members;
+              const name = type.name[0];
+              const members = type.members;
               mpExistingPackageXML[name] = members;
             }
 
@@ -868,8 +869,8 @@ class CodingPanel {
             vscode.workspace.workspaceFolders[0].uri.fsPath,
         );
 
-        var p = new Promise((resolve) => {
-          var foo: child.ChildProcess = child.exec(
+        const p = new Promise((resolve) => {
+          const foo: child.ChildProcess = child.exec(
             "sf org list metadata-types --api-version " +
               this.VERSION_NUM +
               " --json",
@@ -892,12 +893,12 @@ class CodingPanel {
             console.log("stdin: " + data);
           });
 
-          foo.on("exit", (code: number, signal: string) => {
+          foo.on("exit", (code: number, _signal: string) => {
             console.log("exited with code " + code);
             console.log("bufferOutData " + bufferOutData);
             try {
-              let data = JSON.parse(bufferOutData);
-              let depArr = [];
+              const data = JSON.parse(bufferOutData);
+              const depArr = [];
               let metadataObjectsArr = data.result.metadataObjects;
 
               // Filter out metadata types that are deprecated or non-retrievable
@@ -912,7 +913,7 @@ class CodingPanel {
               });
 
               for (let index = 0; index < metadataObjectsArr.length; index++) {
-                let obj = metadataObjectsArr[index];
+                const obj = metadataObjectsArr[index];
                 console.log(obj.xmlName);
                 depArr.push(obj.xmlName);
               }
