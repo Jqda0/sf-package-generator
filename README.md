@@ -26,7 +26,9 @@ A Visual Studio Code extension that provides an interactive UI to browse, select
 
 ### ⚡ Workspace Cache
 
-- Caches metadata types and component lists in `.sf/sf-package-generator-cache.json` to speed up repeat loads
+- Metadata types and components are listed from the **connected org** (`sf org list metadata`), not from local files — metadata that exists only in your project and has not been deployed will not appear
+- Caches metadata types and component lists in `.sf/.sf-package-generator-cache.json` to speed up repeat loads
+- The cache is tied to the connected org and user — switching your default target org loads that org's metadata instead of reusing the previous org's cached list
 - **24-hour TTL** — cache auto-expires after one day
 - **Refresh** button in the toolbar to clear the cache and re-fetch from the org on demand
 - Cache age indicator (e.g. "⚡ Cached (12m ago)") shown in the toolbar
