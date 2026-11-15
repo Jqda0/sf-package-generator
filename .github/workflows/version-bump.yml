@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   publish:
@@ -18,10 +19,10 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Use Node.js 20
+      - name: Use Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -39,9 +40,7 @@ jobs:
         run: npm version minor --no-git-tag-version
 
       - name: Publish current version
-        run: vsce publish
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: vsce publish --oidc
 
       - name: Commit and push version bump
         run: |
