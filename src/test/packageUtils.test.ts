@@ -5,6 +5,8 @@ import {
   generatePackageXmlString,
   filterRetrievableTypes,
   isCacheValid,
+  isCacheForOrg,
+  getOrgCacheKey,
   NON_RETRIEVABLE_TYPES,
   WILDCARD_TYPES,
   REPORT_FOLDER_MAP,
@@ -380,5 +382,65 @@ describe("constants", () => {
 
   it("CACHE_TTL_MS equals 24 hours in milliseconds", () => {
     assert.strictEqual(CACHE_TTL_MS, 86400000);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// getOrgCacheKey / isCacheForOrg
+// ────────────────────────────────────────────────────────────────────────────
+
+describe("getOrgCacheKey", () => {
+  it("combines org id and username", () => {
+    assert.strictEqual(
+      getOrgCacheKey({ id: "00D1", username: "a@example.com" }),
+      "00D1|a@example.com",
+    );
+  });
+
+  it("differs between orgs and between users of the same org", () => {
+    const a = getOrgCacheKey({ id: "00D1", username: "a@example.com" });
+    const b = getOrgCacheKey({ id: "00D2", username: "a@example.com" });
+    const c = getOrgCacheKey({ id: "00D1", username: "b@example.com" });
+    assert.notStrictEqual(a, b);
+    assert.notStrictEqual(a, c);
+  });
+
+  it("falls back to instanceUrl when no org id is present", () => {
+    assert.strictEqual(
+      getOrgCacheKey({
+        instanceUrl: "https://x.my.salesforce.com",
+        username: "a@example.com",
+      }),
+      "https://x.my.salesforce.com|a@example.com",
+    );
+  });
+
+  it("returns an empty string when the org cannot be identified", () => {
+    assert.strictEqual(getOrgCacheKey(null), "");
+    assert.strictEqual(getOrgCacheKey({}), "");
+    assert.strictEqual(getOrgCacheKey({ id: "00D1" }), "");
+  });
+});
+
+describe("isCacheForOrg", () => {
+  const orgA = getOrgCacheKey({ id: "00D1", username: "a@example.com" });
+  const orgB = getOrgCacheKey({ id: "00D2", username: "b@example.com" });
+
+  it("accepts a cache written for the same org", () => {
+    assert.strictEqual(isCacheForOrg({ orgKey: orgA }, orgA), true);
+  });
+
+  it("rejects a cache written for a different org (switched target org)", () => {
+    assert.strictEqual(isCacheForOrg({ orgKey: orgA }, orgB), false);
+  });
+
+  it("rejects a legacy cache without an org key", () => {
+    assert.strictEqual(isCacheForOrg({}, orgA), false);
+  });
+
+  it("rejects everything when the current org is unknown", () => {
+    assert.strictEqual(isCacheForOrg({ orgKey: orgA }, ""), false);
+    assert.strictEqual(isCacheForOrg({ orgKey: "" }, ""), false);
+    assert.strictEqual(isCacheForOrg(null, orgA), false);
   });
 });

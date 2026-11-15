@@ -337,3 +337,38 @@ export function isCacheValid(
   const age = Date.now() - cache.timestamp;
   return age <= CACHE_TTL_MS;
 }
+
+/**
+ * Build a stable identifier for the connected org from `sf org display --json`
+ * output, used to scope the metadata cache to a single org and user.
+ * Returns `""` when the org cannot be identified.
+ */
+export function getOrgCacheKey(
+  displayResult: {
+    id?: string;
+    orgId?: string;
+    username?: string;
+    instanceUrl?: string;
+  } | null,
+): string {
+  if (!displayResult) {
+    return "";
+  }
+  const orgId = displayResult.id || displayResult.orgId || "";
+  const identity = orgId || displayResult.instanceUrl || "";
+  if (!identity || !displayResult.username) {
+    return "";
+  }
+  return identity + "|" + displayResult.username;
+}
+
+/**
+ * Check whether a cache object was written for the given org. Caches without
+ * an org key (written by older versions) and unidentified orgs never match.
+ */
+export function isCacheForOrg(
+  cache: { orgKey?: string } | null,
+  currentOrgKey: string,
+): boolean {
+  return !!cache && !!currentOrgKey && cache.orgKey === currentOrgKey;
+}

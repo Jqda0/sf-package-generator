@@ -9,6 +9,8 @@ import {
   buildPackageMap,
   buildSelectedMetadataMap,
   generatePackageXmlString,
+  getOrgCacheKey,
+  isCacheForOrg,
 } from "./packageUtils.js";
 
 const fs = require("fs");
@@ -19,6 +21,7 @@ const EXTENSION_VERSION: string =
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require("../package.json").version ?? "0.0.0";
 let DEFAULT_API_VERSION = "";
+let DEFAULT_ORG_KEY = "";
 
 /**
  * Resolve the full path to the `sf` CLI binary.
@@ -73,15 +76,17 @@ const SF_CMD = getSfCommand();
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("sfPackageGen.chooseMetadata", async () => {
-      DEFAULT_API_VERSION = await getAPIVersion();
+      const orgInfo = await getOrgInfo();
+      DEFAULT_API_VERSION = orgInfo.apiVersion;
+      DEFAULT_ORG_KEY = orgInfo.orgKey;
       console.log("DEFAULT_API_VERSION " + DEFAULT_API_VERSION);
       CodingPanel.createOrShow(context.extensionPath);
     }),
   );
 }
 
-function getAPIVersion(): Promise<string> {
-  console.log("getAPIVersion invoked");
+function getOrgInfo(): Promise<{ apiVersion: string; orgKey: string }> {
+  console.log("getOrgInfo invoked");
   return new Promise((resolve, _reject) => {
     const sfCmd = SF_CMD + " org display --json";
     const foo: child.ChildProcess = child.exec(sfCmd, {
@@ -112,7 +117,7 @@ function getAPIVersion(): Promise<string> {
           apiVersion = FALLBACK_API_VERSION;
         }
         console.log("apiVersion " + apiVersion);
-        resolve(apiVersion);
+        resolve({ apiVersion, orgKey: getOrgCacheKey(data?.result) });
       } catch (e) {
         console.error("Error parsing sf org display output: " + e);
         console.error("stderr: " + stderrData);
@@ -120,7 +125,7 @@ function getAPIVersion(): Promise<string> {
           "Could not determine API version from org. Using default version " +
             FALLBACK_API_VERSION,
         );
-        resolve(FALLBACK_API_VERSION);
+        resolve({ apiVersion: FALLBACK_API_VERSION, orgKey: "" });
       }
     });
   });
@@ -145,6 +150,7 @@ class CodingPanel {
   // NON_RETRIEVABLE_TYPES imported from packageUtils.ts
 
   private VERSION_NUM = DEFAULT_API_VERSION;
+  private ORG_KEY = DEFAULT_ORG_KEY;
   private static CACHE_FILE_NAME = ".sf-package-generator-cache.json";
   private infoMsg = "All metadata selected except ";
 
@@ -156,7 +162,7 @@ class CodingPanel {
     );
   }
 
-  private static readCache(): any | null {
+  private static readCache(orgKey: string): any | null {
     try {
       const cachePath = CodingPanel.getCachePath();
       if (!fs.existsSync(cachePath)) {
@@ -174,6 +180,10 @@ class CodingPanel {
         );
         return null;
       }
+      if (!isCacheForOrg(cache, orgKey)) {
+        console.log("Cache ignored (written for a different or unknown org)");
+        return null;
+      }
       const age = Date.now() - (cache.timestamp || 0);
       if (age > CACHE_TTL_MS) {
         console.log(
@@ -189,7 +199,11 @@ class CodingPanel {
     }
   }
 
-  private static writeCache(cache: any): void {
+  private static writeCache(cache: any, orgKey: string): void {
+    if (!orgKey) {
+      console.log("Cache not written (connected org could not be identified)");
+      return;
+    }
     try {
       const cachePath = CodingPanel.getCachePath();
       const cacheDir = path.dirname(cachePath);
@@ -198,6 +212,7 @@ class CodingPanel {
       }
       cache.timestamp = Date.now();
       cache.extensionVersion = EXTENSION_VERSION;
+      cache.orgKey = orgKey;
       fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), "utf-8");
       console.log("Cache written to " + cachePath);
     } catch (e) {
@@ -224,7 +239,17 @@ class CodingPanel {
 
     // If we already have a panel, show it.
     if (CodingPanel.currentPanel) {
-      CodingPanel.currentPanel._panel.reveal(column);
+      const existing = CodingPanel.currentPanel;
+      existing._panel.reveal(column);
+      if (
+        existing.ORG_KEY !== DEFAULT_ORG_KEY ||
+        existing.VERSION_NUM !== DEFAULT_API_VERSION
+      ) {
+        // The connected org changed while the panel was open
+        existing.ORG_KEY = DEFAULT_ORG_KEY;
+        existing.VERSION_NUM = DEFAULT_API_VERSION;
+        existing.handleInitLoadRequest();
+      }
       return;
     }
 
@@ -397,7 +422,7 @@ class CodingPanel {
     console.log("Invoked fetchChildren " + JSON.stringify(node));
 
     // Check cache for this metadata type's children
-    const cache = CodingPanel.readCache();
+    const cache = CodingPanel.readCache(this.ORG_KEY);
     if (
       cache &&
       cache.children &&
@@ -776,7 +801,7 @@ class CodingPanel {
 
   private cacheChildrenResults(mType: string, results: any): void {
     try {
-      const cache = CodingPanel.readCache() || {
+      const cache = CodingPanel.readCache(this.ORG_KEY) || {
         apiVersion: this.VERSION_NUM,
         children: {},
       };
@@ -784,7 +809,7 @@ class CodingPanel {
         cache.children = {};
       }
       cache.children[mType] = results;
-      CodingPanel.writeCache(cache);
+      CodingPanel.writeCache(cache, this.ORG_KEY);
     } catch (e) {
       console.error("Error caching children for " + mType + ": " + e);
     }
@@ -810,7 +835,7 @@ class CodingPanel {
   }
 
   private handleInitLoadRequest() {
-    const cache = CodingPanel.readCache();
+    const cache = CodingPanel.readCache(this.ORG_KEY);
     if (
       cache &&
       cache.metadataObjects &&
@@ -997,13 +1022,13 @@ class CodingPanel {
                 depArr.push(obj.xmlName);
               }
               // Write metadata types to cache
-              const cache = CodingPanel.readCache() || {};
+              const cache = CodingPanel.readCache(this.ORG_KEY) || {};
               cache.apiVersion = this.VERSION_NUM;
               cache.metadataObjects = metadataObjectsArr;
               if (!cache.children) {
                 cache.children = {};
               }
-              CodingPanel.writeCache(cache);
+              CodingPanel.writeCache(cache, this.ORG_KEY);
 
               this._panel.webview.postMessage({
                 command: "metadataObjects",
